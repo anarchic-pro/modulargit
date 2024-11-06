@@ -1,0 +1,22 @@
+#!/bin/bash
+
+# Get the real path of this script, following symlinks
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do # resolve $SOURCE until the file is no longer a symlink
+    DIR="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
+    SOURCE="$(readlink "$SOURCE")"
+    [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
+
+# Find and store the real git path
+REAL_GIT=$(which git)
+export REAL_GIT
+
+# Create alias for git that points to gitmod script
+alias git="$SCRIPT_DIR/gitmod"
+
+# Debug message only if GITMODS_DEBUG=true
+if [ "${GITMODS_DEBUG,,}" = "true" ]; then
+    echo "Git is now aliased to gitmod. Original git command is stored in \$REAL_GIT"
+fi

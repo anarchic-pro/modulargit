@@ -1,0 +1,43 @@
+#!/bin/bash
+
+
+# Debug function
+debug() {
+    if [[ "${GITMODS_DEBUG}" == "true" ]]; then
+        echo "$1"
+    fi
+}
+
+# Check if REAL_GIT is set
+if [ -z "$REAL_GIT" ]; then
+    echo "Error: REAL_GIT environment variable is not set" >&2
+    exit 1
+fi
+
+# Function to log git commands
+log_git_command() {
+    command="$*"
+    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    current_repo=$("$REAL_GIT" rev-parse --git-dir 2>/dev/null)
+    echo "[$timestamp] [$current_repo] $command" >> ~/.git_command_log
+}
+
+# Store all arguments in an array
+args=("$@")
+
+# Remove the first argument (we'll process it separately)
+first_arg="${args[0]}"
+unset 'args[0]'
+
+# If first argument is "check", perform the monitoring logic
+if [ "$first_arg" = "check" ]; then
+    debug "(prohibit-branch) This module is run-only"
+fi
+
+if [ "$first_arg" = "run" ]; then
+    # Execute the actual git command without the first argument
+    # Using "${args[@]}" maintains proper handling of arguments with spaces
+
+    debug "$REAL_GIT ${args[@]}"
+    exec "$REAL_GIT" "${args[@]}"
+fi

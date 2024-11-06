@@ -1,0 +1,137 @@
+#!/bin/bash
+
+CONFIG_FILE="$HOME/.gitprohibit"
+
+# Debug function
+debug() {
+    if [[ "${GITMODS_DEBUG}" == "true" ]]; then
+        echo "$1"
+    fi
+}
+
+# Check if REAL_GIT is set
+if [ -z "$REAL_GIT" ]; then
+    echo "Error: REAL_GIT environment variable is not set" >&2
+    exit 1
+fi
+
+# Function to read target repositories from config file
+load_target_repositories() {
+    if [ ! -f "$CONFIG_FILE" ]; then
+        return 1
+    fi
+    
+    # Read all non-empty, non-comment lines from config file
+    mapfile -t target_repos < <(grep -v '^#' "$CONFIG_FILE" | grep -v '^[[:space:]]*$')
+    
+    # Validate each path and convert to absolute .git paths
+    local valid_repos=()
+    for repo in "${target_repos[@]}"; do
+        # Expand potential ~/ in path
+        repo="${repo/#\~/$HOME}"
+        
+        # Add .git if not present
+        if [[ ! "$repo" == *".git" ]]; then
+            repo="${repo%/}/.git"
+        fi
+        
+        # Normalize path
+        repo=$(realpath -q "$repo" 2>/dev/null)
+        
+        if [ -d "$repo" ]; then
+            valid_repos+=("$repo")
+        else
+            echo "Warning: Invalid repository path in config: $repo" >&2
+        fi
+    done
+    
+    target_repos=("${valid_repos[@]}")
+    return 0
+}
+
+# Function to check if we're in one of the target repositories
+check_repository() {
+    current_repo=$("$REAL_GIT" rev-parse --git-dir 2>/dev/null)
+    if [ -z "$current_repo" ]; then
+        return 1
+    fi
+    
+    # Convert to absolute path
+    current_repo=$(realpath "$current_repo")
+
+    if command -v CYGPATH 2>&1 >/dev/null
+    then
+        current_repo=$(CYGPATH -w -m $current_repo)
+    fi
+    
+    for target_repo in "${target_repos[@]}"; do
+        if [ "$current_repo" = "$target_repo" ]; then
+            return 0  # We are in one of the target repositories
+        fi
+    done
+    
+    return 1  # We are not in any target repository
+}
+
+# Function to log git commands
+log_git_command() {
+    command="$*"
+    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    current_repo=$("$REAL_GIT" rev-parse --git-dir 2>/dev/null)
+    echo "[$timestamp] [$current_repo] $command" >> ~/.git_command_log
+}
+
+# Check if this is the git command we want to monitor/prohibit
+check_prohibited_command() {
+    command="$*"
+        
+    # Example: Prohibit 'git branch' command
+    if [ "$1" = "branch" ]; then
+        echo "(prohibit-branch) The 'git branch' command is prohibited in this repository."
+        return 1
+    fi
+    
+    # Add more prohibited commands here if needed
+    return 0
+}
+
+# Main logic
+if [ $# -eq 0 ]; then
+    # No arguments provided, just run git
+    exec "$REAL_GIT"
+fi
+
+# Store all arguments in an array
+args=("$@")
+
+# Remove the first argument (we'll process it separately)
+first_arg="${args[0]}"
+unset 'args[0]'
+
+# If first argument is "check", perform the monitoring logic
+if [ "$first_arg" = "check" ]; then
+    # Load target repositories from config file
+    if ! load_target_repositories; then
+        echo "Warning: No config file found at $CONFIG_FILE. No repositories will be monitored." >&2
+    fi
+
+    if check_repository; then
+        # Log the command (excluding the "check" argument)
+        log_git_command "${args[@]}"
+        
+        # Check if command is prohibited
+        if ! check_prohibited_command "${args[@]}"; then
+            exit 1
+        fi
+    fi
+fi
+
+if [ "$first_arg" = "run" ]; then
+    # Execute the actual git command without the first argument
+    # Using "${args[@]}" maintains proper handling of arguments with spaces
+
+    # debug "$REAL_GIT ${args[@]}"
+    # exec "$REAL_GIT" "${args[@]}"
+
+    debug "(prohibit-branch) This module is check-only"
+fi

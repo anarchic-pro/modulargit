@@ -1,0 +1,85 @@
+#!/bin/bash
+
+# Debug function
+debug() {
+    if [[ "${GITMODS_DEBUG}" == "true" ]]; then
+        echo "$1"
+    fi
+}
+
+# Get the real path of the script (resolving symlinks)
+SCRIPT_PATH=$(readlink -f "${BASH_SOURCE[0]}")
+SCRIPT_DIR=$(dirname "$SCRIPT_PATH")
+
+# Function to check if a file exists and is readable
+check_file_readable() {
+    if [[ ! -f "$1" || ! -r "$1" ]]; then
+        echo "Error: Cannot read file $1"
+        exit 1
+    fi
+}
+
+# Function to check if a directory exists and is readable
+check_dir_readable() {
+    if [[ ! -d "$1" || ! -r "$1" ]]; then
+        echo "Error: Cannot access directory $1"
+        exit 1
+    fi
+}
+
+# Set default mods directory
+MODS_DIR="$SCRIPT_DIR/../mods"
+
+# If .gitmods exists, read it
+CONFIG_FILE="$HOME/.gitmods"
+if [[ -f "$CONFIG_FILE" && -r "$CONFIG_FILE" ]]; then
+    # Read the mods directory path from the first line
+    CUSTOM_MODS_DIR=$(head -n 1 "$CONFIG_FILE")
+    if [[ "$CUSTOM_MODS_DIR" == "DEFAULT" ]]; then
+        CUSTOM_MODS_DIR=$MODS_DIR
+    fi
+    if [[ -n "$CUSTOM_MODS_DIR" ]]; then
+        MODS_DIR="${CUSTOM_MODS_DIR/#\~/$HOME}"  # Expand ~ to full home path
+    fi
+    # Read enabled mods (skip the first line)
+    ENABLED_MODS=($(tail -n +2 "$CONFIG_FILE"))
+else
+    # If no config file exists, use all executable files from mods directory
+    # debug "No config file found at $CONFIG_FILE, using all mods from $MODS_DIR"
+    # ENABLED_MODS=($(find "$MODS_DIR" -type f -executable -printf "%f\n" 2>/dev/null))
+    debug "No config file found at $CONFIG_FILE, using nothing from $MODS_DIR"
+    ENABLED_MODS=()
+fi
+
+check_dir_readable "$MODS_DIR"
+
+# Validate that all enabled mods exist and are executable
+for mod in "${ENABLED_MODS[@]}"; do
+    mod_path="$MODS_DIR/$mod"
+    if [[ ! -f "$mod_path" || ! -x "$mod_path" ]]; then
+        echo "Error: Mod '$mod' not found or not executable at $mod_path"
+        exit 1
+    fi
+done
+
+# First, run all mods with "check" parameter
+debug "Running pre-checks..."
+for mod in "${ENABLED_MODS[@]}"; do
+    mod_path="$MODS_DIR/$mod"
+    debug "Checking $mod..."
+    if ! "$mod_path" check "$@"; then
+        debug "($mod) Execution stopped "
+        exit 1
+    fi
+done
+
+# If all checks passed, run all mods with "run" parameter
+debug "Running modules..."
+for mod in "${ENABLED_MODS[@]}"; do
+    mod_path="$MODS_DIR/$mod"
+    debug "Running $mod..."
+    if ! "$mod_path" run "$@"; then
+        echo "Run failed for $mod"
+        exit 1
+    fi
+done
