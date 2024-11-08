@@ -13,6 +13,12 @@ debug "Raw arguments of the script: $@"
 usage() {
     echo "Usage: git feature <command> [options]"
     echo "Commands:"
+    echo "  trunk                      Trunk the current branch"
+    echo "       [--rebase] or [--merge], default is rebase"
+    echo "       [--no-switch], default is switching to the trunk"
+    echo "       [--delete-local], default is false"
+    echo "       [--delete-remote], default is false"
+    echo "       [--push-main], default is false"
     echo "  start <feature-name>       Start a new feature branch"
     echo "  get <feature-name>         Fetch and check out an existing feature branch from remote"
     echo "  switch <feature-name>      Check out an existing feature branch locally"
@@ -192,7 +198,7 @@ case "$SUBCOMMAND" in
         SWITCH_TO_MAIN=true
         DELETE_LOCAL=false
         DELETE_REMOTE=false
-        PUSH_MAIN=false
+        PUSH_TRUNK=false
 
         # Parse the parameters
         while [[ $# -gt 0 ]]; do
@@ -217,8 +223,8 @@ case "$SUBCOMMAND" in
                     DELETE_REMOTE=true
                     shift
                     ;;
-                --push-main)
-                    PUSH_MAIN=true
+                --push-trunk)
+                    PUSH_TRUNK=true
                     shift
                     ;;
                 *)
@@ -246,7 +252,7 @@ case "$SUBCOMMAND" in
         fi
 
         # Optionally push the trunk branch (main by default) to the upstream
-        if [ "$PUSH_MAIN" == "true" ]; then
+        if [ "$PUSH_TRUNK" == "true" ]; then
             $REAL_GIT push "$REMOTE" $TRUNK_BRANCH
         fi
 
