@@ -1,0 +1,275 @@
+#!/bin/bash
+
+# Debug function
+debug() {
+    if [[ "${GITMODS_DEBUG}" == "true" ]]; then
+        echo "$1"
+    fi
+}
+
+debug "Raw arguments of the script: $@"
+
+# Function to display usage information
+usage() {
+    echo "Usage: git feature <command> [options]"
+    echo "Commands:"
+    echo "  start <feature-name>       Start a new feature branch"
+    echo "  get <feature-name>         Fetch and check out an existing feature branch from remote"
+    echo "  switch <feature-name>      Check out an existing feature branch locally"
+    echo "  list                       List all feature branches"
+    echo "  sync [--rebase|--merge]    Sync current feature branch with the trunk (default: rebase)"
+    echo "  commit <message>           Stage and commit changes with a message"
+    echo "  next                       Amend the last commit and force-update the remote feature branch"
+    echo "  push [--force]             Push the current feature branch"
+    echo "  review                     Prepare for pull request and show summary"
+    echo "  finish [--delete-remote]   Finish the feature branch and delete it"
+    echo "  status                     Show status compared to the trunk"
+    echo "  abort                      Abort an ongoing rebase or merge"
+    echo "  diff                       Show differences between the feature branch and the trunk"
+}
+
+# Check if REAL_GIT is set
+if [ -z "$REAL_GIT" ]; then
+    echo "Error: REAL_GIT environment variable is not set" >&2
+    exit 1
+fi
+
+# # Ensure the first argument is 'feature'
+# if [ "$1" != "feature" ]; then
+#     usage
+#     exit 1
+# fi
+
+# Ensure a sub-command is provided
+if [ -z "$1" ]; then
+    usage
+    exit 1
+fi
+
+# Define the trunk branch (default is 'main')
+TRUNK_BRANCH="main"
+
+# Define the feature branch prefix, defaulting to 'feature/' if not set
+FEATURE_PREFIX="${GIT_FEATURE_PREFIX:-feature/}"
+
+# Define the remote, defaulting to 'origin' if not set
+REMOTE="${GIT_REMOTE:-origin}"
+
+# Shift arguments to process sub-commands
+# shift 1
+SUBCOMMAND=$1
+shift 1
+
+case "$SUBCOMMAND" in
+    start)
+        if [ -z "$1" ]; then
+            echo "Error: You must provide a feature name."
+            exit 1
+        fi
+        FEATURE_BRANCH="${FEATURE_PREFIX}$1"
+        "$REAL_GIT" fetch "$REMOTE" $TRUNK_BRANCH 
+        "$REAL_GIT" checkout $TRUNK_BRANCH
+        "$REAL_GIT" pull "$REMOTE" $TRUNK_BRANCH 
+        "$REAL_GIT" checkout -b "$FEATURE_BRANCH"
+        "$REAL_GIT" branch --set-upstream-to="$REMOTE"/"$FEATURE_BRANCH" "$FEATURE_BRANCH"
+        echo "Feature branch '$FEATURE_BRANCH' created and checked out."
+        "$REAL_GIT" status
+        ;;
+
+    get)
+        if [ -z "$1" ]; then
+            echo "Error: You must provide a feature name."
+            exit 1
+        fi
+        FEATURE_BRANCH="${FEATURE_PREFIX}$1"
+        "$REAL_GIT" fetch "$REMOTE" "$FEATURE_BRANCH"
+        if [ $? -ne 0 ]; then
+            echo "Error: Feature branch '$FEATURE_BRANCH' does not exist on $REMOTE."
+            exit 1
+        fi
+        "$REAL_GIT" checkout -b "$FEATURE_BRANCH" --track "$REMOTE/$FEATURE_BRANCH"
+        echo "Feature branch '$FEATURE_BRANCH' fetched and checked out."
+        "$REAL_GIT" status
+        ;;
+
+    switch)
+        if [ -z "$1" ]; then
+            echo "Error: You must provide a feature name."
+            exit 1
+        fi
+        FEATURE_BRANCH="${FEATURE_PREFIX}$1"
+        "$REAL_GIT" checkout "$FEATURE_BRANCH"
+        "$REAL_GIT" status
+        ;;
+
+
+    list)                
+        #$REAL_GIT branch --list "${FEATURE_PREFIX}*"
+        
+        # Get current branch name
+        CURRENT_BRANCH=$($REAL_GIT branch --show-current)
+        
+        # List all feature branches, remove the prefix, and add custom prefixes
+        $REAL_GIT branch --list "${FEATURE_PREFIX}*" | sed -E "
+            s|^\*?\s*${FEATURE_PREFIX}|${CURRENT_BRANCH:+- }|;  # First replace all with '- '
+            s|^- (${CURRENT_BRANCH#${FEATURE_PREFIX}})\$|* \1|  # Then replace current with '* '
+        "
+        ;;
+
+    sync)
+        # Default to --rebase if no argument is provided
+        if [ -z "$1" ] || [ "$1" == "--rebase" ]; then
+            "$REAL_GIT" fetch "$REMOTE" $TRUNK_BRANCH && "$REAL_GIT" rebase $TRUNK_BRANCH
+        elif [ "$1" == "--merge" ]; then
+            "$REAL_GIT" fetch "$REMOTE" $TRUNK_BRANCH && "$REAL_GIT" merge $TRUNK_BRANCH
+        else
+            echo "Error: Invalid option. Use --rebase (default) or --merge."
+            exit 1
+        fi
+        "$REAL_GIT" status
+        ;;
+
+    commit)
+        if [ -z "$1" ]; then
+            echo "Error: You must provide a commit message."
+            exit 1
+        fi
+        "$REAL_GIT" add . && "$REAL_GIT" commit -m "$1"
+        "$REAL_GIT" status
+        ;;
+
+    next)
+        "$REAL_GIT" commit --amend
+        "$REAL_GIT" push "$REMOTE" HEAD --force    
+        "$REAL_GIT" status    
+        ;;
+
+    push)
+        FEATURE_BRANCH=$($REAL_GIT symbolic-ref --short HEAD)
+        "$REAL_GIT" branch --set-upstream-to="$REMOTE"/"$FEATURE_BRANCH" "$FEATURE_BRANCH"
+        if [ "$1" == "--force" ]; then
+            "$REAL_GIT" push "$REMOTE" HEAD --force
+        else
+            "$REAL_GIT" push "$REMOTE" HEAD
+        fi
+        "$REAL_GIT" status
+        ;;
+
+    review)
+        "$REAL_GIT" log $TRUNK_BRANCH..HEAD --stat
+        ;;
+
+    finish)
+        CURRENT_BRANCH=$("$REAL_GIT" branch --show-current)
+        if [[ "$CURRENT_BRANCH" != ${FEATURE_PREFIX}* ]]; then
+            echo "Error: You can only finish a branch starting with '${FEATURE_PREFIX}'."
+            exit 1
+        fi
+        "$REAL_GIT" checkout $TRUNK_BRANCH && "$REAL_GIT" pull "$REMOTE" $TRUNK_BRANCH && "$REAL_GIT" branch -d "$CURRENT_BRANCH"
+        if [ "$1" == "--delete-remote" ]; then
+            "$REAL_GIT" push "$REMOTE" --delete "$CURRENT_BRANCH"
+        fi
+        "$REAL_GIT" status
+        ;;
+
+    status)
+        "$REAL_GIT" status
+        "$REAL_GIT" log $TRUNK_BRANCH..HEAD --oneline
+        ;;
+
+    abort)
+        "$REAL_GIT" rebase --abort 2>/dev/null || "$REAL_GIT" merge --abort 2>/dev/null
+        "$REAL_GIT" status
+        ;;
+
+    diff)
+        "$REAL_GIT" diff $TRUNK_BRANCH...HEAD
+        ;;
+
+    trunk)
+        # Default configurations
+        REBASE_STRATEGY="rebase"
+        SWITCH_TO_MAIN=true
+        DELETE_LOCAL=false
+        DELETE_REMOTE=false
+        PUSH_MAIN=false
+
+        # Parse the parameters
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --rebase)
+                    REBASE_STRATEGY="rebase"
+                    shift
+                    ;;
+                --merge)
+                    REBASE_STRATEGY="merge"
+                    shift
+                    ;;
+                --no-switch)
+                    SWITCH_TO_MAIN=false
+                    shift
+                    ;;
+                --delete-local)
+                    DELETE_LOCAL=true
+                    shift
+                    ;;
+                --delete-remote)
+                    DELETE_REMOTE=true
+                    shift
+                    ;;
+                --push-main)
+                    PUSH_MAIN=true
+                    shift
+                    ;;
+                *)
+                    echo "Error: Unknown parameter '$1'."
+                    exit 1
+                    ;;
+            esac
+        done
+
+        # Save the current branch before switching to main
+        FEATURE_BRANCH=$($REAL_GIT symbolic-ref --short HEAD)
+
+        # Fetch the latest changes from the upstream (using TRUNK_BRANCH which is set externally)
+        $REAL_GIT fetch "$REMOTE" $TRUNK_BRANCH
+
+        # If SWITCH_TO_MAIN is true, switch to the trunk branch (main by default)        
+        $REAL_GIT checkout $TRUNK_BRANCH
+        $REAL_GIT pull "$REMOTE" $TRUNK_BRANCH
+
+        # Merge or rebase the feature branch onto the upstream (main)
+        if [ "$REBASE_STRATEGY" == "rebase" ]; then
+            $REAL_GIT rebase "$FEATURE_BRANCH" "$TRUNK_BRANCH"
+        elif [ "$REBASE_STRATEGY" == "merge" ]; then
+            $REAL_GIT merge "$FEATURE_BRANCH" "$TRUNK_BRANCH"
+        fi
+
+        # Optionally push the trunk branch (main by default) to the upstream
+        if [ "$PUSH_MAIN" == "true" ]; then
+            $REAL_GIT push "$REMOTE" $TRUNK_BRANCH
+        fi
+
+        if [ "$SWITCH_TO_MAIN" != "true" ]; then
+            $REAL_GIT checkout "$FEATURE_BRANCH"
+        fi
+
+        # Optionally delete the local feature branch
+        if [ "$DELETE_LOCAL" == "true" ]; then
+            $REAL_GIT branch -d "$FEATURE_BRANCH"
+        fi
+
+        # Optionally delete the remote feature branch
+        if [ "$DELETE_REMOTE" == "true" ]; then
+            $REAL_GIT push "$REMOTE" --delete "$FEATURE_BRANCH"
+        fi
+
+        echo "Feature '$FEATURE_BRANCH' successfully linked to $TRUNK_BRANCH."
+        ;;
+
+    *)
+        echo "Error: Unknown sub-command '$SUBCOMMAND'."
+        usage
+        exit 1
+        ;;
+esac

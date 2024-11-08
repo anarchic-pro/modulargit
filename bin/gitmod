@@ -27,6 +27,29 @@ check_dir_readable() {
     fi
 }
 
+# Set default cmds directory
+CMD_DIR="$SCRIPT_DIR/../cmd"
+
+# If .gitcmd exists, read it
+CMD_CONFIG_FILE="$HOME/.gitcmd"
+if [[ -f "$CMD_CONFIG_FILE" && -r "$CMD_CONFIG_FILE" ]]; then
+    # Read the cmds directory path from the first line
+    CUSTOM_CMD_DIR=$(head -n 1 "$CMD_CONFIG_FILE")
+    if [[ "$CUSTOM_CMD_DIR" == "DEFAULT" ]]; then
+        CUSTOM_CMD_DIR=$CMD_DIR
+    fi
+    if [[ -n "$CUSTOM_CMD_DIR" ]]; then
+        CMD_DIR="${CUSTOM_CMD_DIR/#\~/$HOME}"  # Expand ~ to full home path
+    fi
+    # Read enabled cmds (skip the first line)
+    ENABLED_CMD=($(tail -n +2 "$CMD_CONFIG_FILE"))
+else
+    debug "No config file found at $CMD_CONFIG_FILE, using nothing from $CMD_DIR"
+    ENABLED_CMD=()
+fi
+
+check_dir_readable "$CMD_DIR"
+
 # Set default mods directory
 MODS_DIR="$SCRIPT_DIR/../mods"
 
@@ -44,14 +67,23 @@ if [[ -f "$CONFIG_FILE" && -r "$CONFIG_FILE" ]]; then
     # Read enabled mods (skip the first line)
     ENABLED_MODS=($(tail -n +2 "$CONFIG_FILE"))
 else
-    # If no config file exists, use all executable files from mods directory
-    # debug "No config file found at $CONFIG_FILE, using all mods from $MODS_DIR"
-    # ENABLED_MODS=($(find "$MODS_DIR" -type f -executable -printf "%f\n" 2>/dev/null))
     debug "No config file found at $CONFIG_FILE, using nothing from $MODS_DIR"
     ENABLED_MODS=()
 fi
 
 check_dir_readable "$MODS_DIR"
+
+# Check if first parameter matches an enabled command
+CUSTOM_CMD=""
+if [ $# -gt 0 ]; then
+    for cmd in "${ENABLED_CMD[@]}"; do
+        if [ "$1" == "$cmd" ]; then
+            CUSTOM_CMD="$CMD_DIR/$cmd"
+            debug "Found custom command: $CUSTOM_CMD"
+            break
+        fi
+    done
+fi
 
 # Validate that all enabled mods exist and are executable
 for mod in "${ENABLED_MODS[@]}"; do
@@ -65,6 +97,12 @@ done
 # First, run all mods with "check" parameter
 debug "Running pre-checks..."
 for mod in "${ENABLED_MODS[@]}"; do
+    # Skip base-git module if we're using a custom command
+    if [[ -n "$CUSTOM_CMD" && "$mod" == "base-git" ]]; then
+        debug "Skipping base-git module check as using custom command"
+        continue
+    fi
+    
     mod_path="$MODS_DIR/$mod"
     debug "Checking $mod..."
     if ! "$mod_path" check "$@"; then
@@ -76,6 +114,12 @@ done
 # If all checks passed, run all mods with "run" parameter
 debug "Running modules..."
 for mod in "${ENABLED_MODS[@]}"; do
+    # Skip base-git module if we're using a custom command
+    if [[ -n "$CUSTOM_CMD" && "$mod" == "base-git" ]]; then
+        debug "Skipping base-git module run as using custom command"
+        continue
+    fi
+    
     mod_path="$MODS_DIR/$mod"
     debug "Running $mod..."
     if ! "$mod_path" run "$@"; then
@@ -83,3 +127,14 @@ for mod in "${ENABLED_MODS[@]}"; do
         exit 1
     fi
 done
+
+# If we found a custom command, execute it
+if [ -n "$CUSTOM_CMD" ]; then
+    debug "Executing custom command: $CUSTOM_CMD"
+    if [[ -x "$CUSTOM_CMD" ]]; then
+        exec "$CUSTOM_CMD" "${@:2}"
+    else
+        echo "Error: Custom command '$CUSTOM_CMD' is not executable"
+        exit 1
+    fi
+fi
