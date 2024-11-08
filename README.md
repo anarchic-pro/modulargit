@@ -45,6 +45,13 @@
     
     **WARNING: please don't forget to put base-git in the end of the list!**
 
+* Enable commands by creating a `~/.gitcmd` file with a structure like this:
+    ```bash
+    DEFAULT
+    feature
+    ```
+    You can replace `DEFAULT` with any directory path where you want to store additional modules.    
+
 * Configure all the modules.    
 
 ## Modules
